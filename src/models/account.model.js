@@ -19,7 +19,7 @@ const accountSchema = new mongoose.Schema({
     currency: {
         type: String,
         required: [ true, "Currency is required for creating an account" ],
-        default: "INR"
+        default: "NPR"
     }
 }, {
     timestamps: true
