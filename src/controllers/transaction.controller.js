@@ -105,55 +105,40 @@ async function createTransaction(req, res) {
 
     let transaction;
     try {
-
-
-        /**
-         * 5. Create transaction (PENDING)
-         */
-        const session = await mongoose.startSession()
-        session.startTransaction()
-
-        transaction = (await transactionModel.create([ {
+        transaction = await transactionModel.create({
             fromAccount,
             toAccount,
             amount,
             idempotencyKey,
             status: "PENDING"
-        } ], { session }))[ 0 ]
+        });
 
-        const debitLedgerEntry = await ledgerModel.create([ {
+        const debitLedgerEntry = await ledgerModel.create({
             account: fromAccount,
             amount: amount,
             transaction: transaction._id,
             type: "DEBIT"
-        } ], { session })
+        });
 
-        await (() => {
-            return new Promise((resolve) => setTimeout(resolve, 15 * 1000));
-        })()
+        // Simulating processing delay
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        const creditLedgerEntry = await ledgerModel.create([ {
+        const creditLedgerEntry = await ledgerModel.create({
             account: toAccount,
             amount: amount,
             transaction: transaction._id,
             type: "CREDIT"
-        } ], { session })
+        });
 
         await transactionModel.findOneAndUpdate(
             { _id: transaction._id },
-            { status: "COMPLETED" },
-            { session }
-        )
+            { status: "COMPLETED" }
+        );
 
-
-        await session.commitTransaction()
-        session.endSession()
     } catch (error) {
-
         return res.status(400).json({
             message: "Transaction is Pending due to some issue, please retry after sometime",
         })
-
     }
     /**
      * 10. Send email notification
@@ -197,47 +182,113 @@ async function createInitialFundsTransaction(req, res) {
     }
 
 
-    const session = await mongoose.startSession()
-    session.startTransaction()
+    try {
+        const transaction = await transactionModel.create({
+            fromAccount: fromUserAccount._id,
+            toAccount,
+            amount,
+            idempotencyKey,
+            status: "PENDING"
+        });
 
-    const transaction = new transactionModel({
-        fromAccount: fromUserAccount._id,
-        toAccount,
-        amount,
-        idempotencyKey,
-        status: "PENDING"
-    })
+        const debitLedgerEntry = await ledgerModel.create({
+            account: fromUserAccount._id,
+            amount: amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
 
-    const debitLedgerEntry = await ledgerModel.create([ {
-        account: fromUserAccount._id,
-        amount: amount,
-        transaction: transaction._id,
-        type: "DEBIT"
-    } ], { session })
+        const creditLedgerEntry = await ledgerModel.create({
+            account: toAccount,
+            amount: amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        });
 
-    const creditLedgerEntry = await ledgerModel.create([ {
-        account: toAccount,
-        amount: amount,
-        transaction: transaction._id,
-        type: "CREDIT"
-    } ], { session })
+        await transactionModel.findOneAndUpdate(
+            { _id: transaction._id },
+            { status: "COMPLETED" }
+        );
 
-    transaction.status = "COMPLETED"
-    await transaction.save({ session })
+        return res.status(201).json({
+            message: "Initial funds transaction completed successfully",
+            transaction: transaction
+        });
+    } catch (err) {
+        console.error("Error creating initial funds transaction:", err)
+        return res.status(500).json({
+            message: "Failed to issue funds: " + (err.message || err.toString())
+        })
+    }
+}
 
-    await session.commitTransaction()
-    session.endSession()
+/**
+ * - Get user's transactions
+ * - GET /api/transactions/
+ * - Query params: startDate, endDate
+ */
+async function getUserTransactions(req, res) {
+    try {
+        const userAccounts = await accountModel.find({ user: req.user._id });
+        const accountIds = userAccounts.map(a => a._id);
 
-    return res.status(201).json({
-        message: "Initial funds transaction completed successfully",
-        transaction: transaction
-    })
+        // Default to last 7 days
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        // Set endDate to end of day
+        endDate.setHours(23, 59, 59, 999);
 
+        const transactions = await transactionModel.find({
+            $or: [
+                { fromAccount: { $in: accountIds } },
+                { toAccount: { $in: accountIds } }
+            ],
+            createdAt: { $gte: startDate, $lte: endDate }
+        }).sort({ createdAt: -1 });
 
+        // Compute balances for each account
+        const balances = {};
+        for (const acc of userAccounts) {
+            balances[acc._id.toString()] = await acc.getBalance();
+        }
+
+        return res.status(200).json({
+            transactions,
+            accounts: userAccounts,
+            balances
+        });
+    } catch (err) {
+        console.error("Error fetching user transactions:", err);
+        return res.status(500).json({ message: "Failed to fetch transactions" });
+    }
+}
+
+/**
+ * - Get all transactions (System User only)
+ * - GET /api/transactions/all
+ * - Query params: startDate, endDate
+ */
+async function getAllTransactions(req, res) {
+    try {
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        endDate.setHours(23, 59, 59, 999);
+
+        const transactions = await transactionModel.find({
+            createdAt: { $gte: startDate, $lte: endDate }
+        }).sort({ createdAt: -1 });
+
+        return res.status(200).json({ transactions });
+    } catch (err) {
+        console.error("Error fetching all transactions:", err);
+        return res.status(500).json({ message: "Failed to fetch transactions" });
+    }
 }
 
 module.exports = {
     createTransaction,
-    createInitialFundsTransaction
+    createInitialFundsTransaction,
+    getUserTransactions,
+    getAllTransactions
 }
 
