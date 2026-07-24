@@ -149,9 +149,64 @@ async function userLogoutController(req, res) {
 
 }
 
+/**
+ * - Create Admin User (System User only)
+ * - POST /api/auth/create-admin
+ * - Accepts: name, email, mobile, password
+ */
+async function createAdminController(req, res) {
+    try {
+        const { email, password, name, mobile } = req.body
+
+        if (!email || !password || !name || !mobile) {
+            return res.status(400).json({
+                message: "All fields (name, email, mobile, password) are required."
+            })
+        }
+
+        // Check if email already exists
+        const emailExists = await userModel.findOne({ email })
+        if (emailExists) {
+            return res.status(422).json({
+                message: "User already exists with this email."
+            })
+        }
+
+        // Check if mobile already exists
+        const mobileExists = await userModel.findOne({ mobile })
+        if (mobileExists) {
+            return res.status(422).json({
+                message: "User already exists with this mobile number."
+            })
+        }
+
+        const user = await userModel.create({
+            email, password, name, mobile, role: "ADMIN"
+        })
+
+        // Auto-create one account for the admin user
+        await accountModel.create({ user: user._id })
+
+        return res.status(201).json({
+            message: "Admin user created successfully.",
+            user: {
+                _id: user._id,
+                email: user.email,
+                name: user.name,
+                mobile: user.mobile,
+                role: "ADMIN"
+            }
+        })
+    } catch (err) {
+        console.error("Error creating admin user:", err)
+        return res.status(500).json({ message: err.message || "Failed to create admin user" })
+    }
+}
+
 
 module.exports = {
     userRegisterController,
     userLoginController,
-    userLogoutController
+    userLogoutController,
+    createAdminController
 }

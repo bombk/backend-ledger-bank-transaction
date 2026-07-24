@@ -305,7 +305,18 @@ async function getAllTransactions(req, res) {
 
         const transactions = await transactionModel.find({
             createdAt: { $gte: startDate, $lte: endDate }
-        }).sort({ createdAt: -1 });
+        })
+        .populate({
+            path: 'fromAccount',
+            select: 'user currency',
+            populate: { path: 'user', select: 'name email mobile' }
+        })
+        .populate({
+            path: 'toAccount',
+            select: 'user currency',
+            populate: { path: 'user', select: 'name email mobile' }
+        })
+        .sort({ createdAt: -1 });
 
         return res.status(200).json({ transactions });
     } catch (err) {
