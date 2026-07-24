@@ -26,8 +26,20 @@ transactionRoutes.get("/", authMiddleware.authMiddleware, transactionController.
 
 /**
  * - GET /api/transactions/all
- * - Get all transactions (System User only)
+ * - Get all transactions (Admin and System User)
  */
-transactionRoutes.get("/all", authMiddleware.authSystemUserMiddleware, transactionController.getAllTransactions)
+transactionRoutes.get("/all", authMiddleware.authAdminMiddleware, transactionController.getAllTransactions)
+
+/**
+ * - POST /api/transactions/:id/refund
+ * - Refund a completed transaction (Admin and System User)
+ */
+transactionRoutes.post("/:id/refund", authMiddleware.authAdminMiddleware, transactionController.refundTransaction)
+
+/**
+ * - POST /api/transactions/:id/repush
+ * - Repush a failed or pending transaction (Admin and System User)
+ */
+transactionRoutes.post("/:id/repush", authMiddleware.authAdminMiddleware, transactionController.repushTransaction)
 
 module.exports = transactionRoutes;

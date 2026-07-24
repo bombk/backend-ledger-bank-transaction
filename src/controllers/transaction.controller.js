@@ -285,10 +285,296 @@ async function getAllTransactions(req, res) {
     }
 }
 
+/**
+ * Refund a completed transaction
+ */
+async function refundTransaction(req, res) {
+    try {
+        const { id } = req.params;
+        const transaction = await transactionModel.findById(id);
+
+        if (!transaction) return res.status(404).json({ message: "Transaction not found" });
+        if (transaction.status !== "COMPLETED") return res.status(400).json({ message: "Only completed transactions can be refunded" });
+
+        // Change old transaction status
+        transaction.status = "REVERSED";
+        await transaction.save();
+
+        // Add inverse ledger entries
+        await ledgerModel.create({
+            account: transaction.toAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
+
+        await ledgerModel.create({
+            account: transaction.fromAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
+
+        // Simulating processing delay
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const creditLedgerEntry = await ledgerModel.create({
+            account: toAccount,
+            amount: amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        });
+
+        await transactionModel.findOneAndUpdate(
+            { _id: transaction._id },
+            { status: "COMPLETED" }
+        );
+
+    } catch (error) {
+        return res.status(400).json({
+            message: "Transaction is Pending due to some issue, please retry after sometime",
+        })
+    }
+    /**
+     * 10. Send email notification
+     */
+    await emailService.sendTransactionEmail(req.user.email, req.user.name, amount, toAccount)
+
+    return res.status(201).json({
+        message: "Transaction completed successfully",
+        transaction: transaction
+    })
+
+}
+
+async function createInitialFundsTransaction(req, res) {
+    const { toAccount, amount, idempotencyKey } = req.body
+
+    if (!toAccount || !amount || !idempotencyKey) {
+        return res.status(400).json({
+            message: "toAccount, amount and idempotencyKey are required"
+        })
+    }
+
+    const toUserAccount = await accountModel.findOne({
+        _id: toAccount,
+    })
+
+    if (!toUserAccount) {
+        return res.status(400).json({
+            message: "Invalid toAccount"
+        })
+    }
+
+    const fromUserAccount = await accountModel.findOne({
+        user: req.user._id
+    })
+
+    if (!fromUserAccount) {
+        return res.status(400).json({
+            message: "System user account not found"
+        })
+    }
+
+
+    try {
+        const transaction = await transactionModel.create({
+            fromAccount: fromUserAccount._id,
+            toAccount,
+            amount,
+            idempotencyKey,
+            status: "PENDING"
+        });
+
+        const debitLedgerEntry = await ledgerModel.create({
+            account: fromUserAccount._id,
+            amount: amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
+
+        const creditLedgerEntry = await ledgerModel.create({
+            account: toAccount,
+            amount: amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        });
+
+        await transactionModel.findOneAndUpdate(
+            { _id: transaction._id },
+            { status: "COMPLETED" }
+        );
+
+        return res.status(201).json({
+            message: "Initial funds transaction completed successfully",
+            transaction: transaction
+        });
+    } catch (err) {
+        console.error("Error creating initial funds transaction:", err)
+        return res.status(500).json({
+            message: "Failed to issue funds: " + (err.message || err.toString())
+        })
+    }
+}
+
+/**
+ * - Get user's transactions
+ * - GET /api/transactions/
+ * - Query params: startDate, endDate
+ */
+async function getUserTransactions(req, res) {
+    try {
+        const userAccounts = await accountModel.find({ user: req.user._id });
+        const accountIds = userAccounts.map(a => a._id);
+
+        // Default to last 7 days
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        // Set endDate to end of day
+        endDate.setHours(23, 59, 59, 999);
+
+        const transactions = await transactionModel.find({
+            $or: [
+                { fromAccount: { $in: accountIds } },
+                { toAccount: { $in: accountIds } }
+            ],
+            createdAt: { $gte: startDate, $lte: endDate }
+        }).sort({ createdAt: -1 });
+
+        // Compute balances for each account
+        const balances = {};
+        for (const acc of userAccounts) {
+            balances[acc._id.toString()] = await acc.getBalance();
+        }
+
+        return res.status(200).json({
+            transactions,
+            accounts: userAccounts,
+            balances
+        });
+    } catch (err) {
+        console.error("Error fetching user transactions:", err);
+        return res.status(500).json({ message: "Failed to fetch transactions" });
+    }
+}
+
+/**
+ * - Get all transactions (System User only)
+ * - GET /api/transactions/all
+ * - Query params: startDate, endDate
+ */
+async function getAllTransactions(req, res) {
+    try {
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        endDate.setHours(23, 59, 59, 999);
+
+        const transactions = await transactionModel.find({
+            createdAt: { $gte: startDate, $lte: endDate }
+        }).sort({ createdAt: -1 });
+
+        return res.status(200).json({ transactions });
+    } catch (err) {
+        console.error("Error fetching all transactions:", err);
+        return res.status(500).json({ message: "Failed to fetch transactions" });
+    }
+}
+
+/**
+ * Refund a completed transaction
+ */
+async function refundTransaction(req, res) {
+    try {
+        const { id } = req.params;
+        const transaction = await transactionModel.findById(id);
+
+        if (!transaction) return res.status(404).json({ message: "Transaction not found" });
+        if (transaction.status !== "COMPLETED") return res.status(400).json({ message: "Only completed transactions can be refunded" });
+
+        // Change old transaction status
+        transaction.status = "REVERSED";
+        await transaction.save();
+
+        // Add inverse ledger entries
+        await ledgerModel.create({
+            account: transaction.toAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
+
+        await ledgerModel.create({
+            account: transaction.fromAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        });
+
+        return res.status(200).json({ message: "Transaction successfully refunded" });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Failed to refund transaction" });
+    }
+}
+
+/**
+ * Repush a failed or pending transaction
+ */
+async function repushTransaction(req, res) {
+    try {
+        const { id } = req.params;
+        const transaction = await transactionModel.findById(id);
+
+        if (!transaction) return res.status(404).json({ message: "Transaction not found" });
+        if (transaction.status === "COMPLETED") return res.status(400).json({ message: "Transaction already completed" });
+
+        // Clean up any existing broken ledger entries
+        await mongoose.connection.db.collection('ledgers').deleteMany({ transaction: transaction._id });
+
+        // Check balance again
+        const fromAccount = await accountModel.findById(transaction.fromAccount);
+        const fromUser = await require('../models/user.model').findById(fromAccount.user).select('+role');
+        const balance = await fromAccount.getBalance();
+        
+        // System initial funds come from the system user or admin, who are allowed to go negative
+        if (fromUser.role !== 'SYSTEM_USER' && fromUser.role !== 'ADMIN' && balance < transaction.amount) {
+            transaction.status = "FAILED";
+            await transaction.save();
+            return res.status(400).json({ message: "Insufficient balance for repush" });
+        }
+
+        // Recreate Ledgers
+        await ledgerModel.create({
+            account: transaction.fromAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        });
+
+        await ledgerModel.create({
+            account: transaction.toAccount,
+            amount: transaction.amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        });
+
+        transaction.status = "COMPLETED";
+        await transaction.save();
+
+        return res.status(200).json({ message: "Transaction successfully repushed" });
+
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Failed to repush transaction" });
+    }
+}
+
+
 module.exports = {
     createTransaction,
     createInitialFundsTransaction,
     getUserTransactions,
-    getAllTransactions
+    getAllTransactions,
+    refundTransaction,
+    repushTransaction
 }
-

@@ -1,4 +1,5 @@
 const userModel = require("../models/user.model")
+const accountModel = require("../models/account.model")
 const jwt = require("jsonwebtoken")
 const emailService = require("../services/email.service")
 const tokenBlackListModel = require("../models/blackList.model")
@@ -6,23 +7,44 @@ const tokenBlackListModel = require("../models/blackList.model")
 /**
 * - user register controller
 * - POST /api/auth/register
+* - Accepts: name, email, mobile, password
+* - Auto-creates one account on successful registration
 */
 async function userRegisterController(req, res) {
-    const { email, password, name } = req.body
+    const { email, password, name, mobile } = req.body
 
-    const isExists = await userModel.findOne({
-        email: email
-    })
+    if (!mobile) {
+        return res.status(400).json({
+            message: "Mobile number is required.",
+            status: "failed"
+        })
+    }
 
-    if (isExists) {
+    // Check if email already exists
+    const emailExists = await userModel.findOne({ email })
+    if (emailExists) {
         return res.status(422).json({
-            message: "User already exists with email.",
+            message: "User already exists with this email.",
+            status: "failed"
+        })
+    }
+
+    // Check if mobile already exists
+    const mobileExists = await userModel.findOne({ mobile })
+    if (mobileExists) {
+        return res.status(422).json({
+            message: "User already exists with this mobile number.",
             status: "failed"
         })
     }
 
     const user = await userModel.create({
-        email, password, name
+        email, password, name, mobile
+    })
+
+    // Auto-create one account for the new user
+    const account = await accountModel.create({
+        user: user._id
     })
 
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "3d" })
@@ -33,8 +55,11 @@ async function userRegisterController(req, res) {
         user: {
             _id: user._id,
             email: user.email,
-            name: user.name
+            name: user.name,
+            mobile: user.mobile,
+            role: "CUSTOMER"
         },
+        account,
         token
     })
 
@@ -44,16 +69,30 @@ async function userRegisterController(req, res) {
 /**
  * - User Login Controller
  * - POST /api/auth/login
+ * - Accepts: login (email or mobile), password
   */
 
 async function userLoginController(req, res) {
-    const { email, password } = req.body
+    const { login, password, email } = req.body
 
-    const user = await userModel.findOne({ email }).select("+password +systemUser")
+    // Support both old format {email, password} and new format {login, password}
+    const loginValue = login || email
+
+    if (!loginValue) {
+        return res.status(400).json({
+            message: "Email or mobile number is required"
+        })
+    }
+
+    // Determine if login is email or mobile
+    const isEmail = loginValue.includes("@")
+    const query = isEmail ? { email: loginValue.toLowerCase() } : { mobile: loginValue }
+
+    const user = await userModel.findOne(query).select("+password +role")
 
     if (!user) {
         return res.status(401).json({
-            message: "Email or password is INVALID"
+            message: "Email/Mobile or password is INVALID"
         })
     }
 
@@ -61,7 +100,7 @@ async function userLoginController(req, res) {
 
     if (!isValidPassword) {
         return res.status(401).json({
-            message: "Email or password is INVALID"
+            message: "Email/Mobile or password is INVALID"
         })
     }
 
@@ -74,7 +113,8 @@ async function userLoginController(req, res) {
             _id: user._id,
             email: user.email,
             name: user.name,
-            systemUser: user.systemUser
+            mobile: user.mobile,
+            role: user.role
         },
         token
     })

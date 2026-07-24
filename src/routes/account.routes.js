@@ -9,10 +9,10 @@ const router = express.Router()
 
 /**
  * - POST /api/accounts/
- * - Create a new account
+ * - Create a new account for a user (System User only)
  * - Protected Route
  */
-router.post("/", authMiddleware.authMiddleware, accountController.createAccountController)
+router.post("/", authMiddleware.authSystemUserMiddleware, accountController.createAccountController)
 
 
 /**
@@ -27,6 +27,12 @@ router.get("/", authMiddleware.authMiddleware, accountController.getUserAccounts
  * - GET /api/accounts/balance/:accountId
  */
 router.get("/balance/:accountId", authMiddleware.authMiddleware, accountController.getAccountBalanceController)
+
+/**
+ * - GET /api/accounts/user/:userId
+ * - Get accounts for a specific user (System User only)
+ */
+router.get("/user/:userId", authMiddleware.authSystemUserMiddleware, accountController.getUserAccountsByUserIdController)
 
 
 

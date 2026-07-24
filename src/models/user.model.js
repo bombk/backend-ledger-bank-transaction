@@ -11,6 +11,13 @@ const userSchema = new mongoose.Schema({
         match: [ /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, "Invalid Email address" ],
         unique: [ true, "Email already exists." ]
     },
+    mobile: {
+        type: String,
+        required: [ true, "Mobile number is required" ],
+        trim: true,
+        match: [ /^[0-9]{10}$/, "Mobile number must be exactly 10 digits" ],
+        unique: [ true, "Mobile number already exists." ]
+    },
     name: {
         type: String,
         required: [ true, "Name is required for creating an account" ]
@@ -21,10 +28,13 @@ const userSchema = new mongoose.Schema({
         minlength: [ 6, "password should contain more than 6 character" ],
         select: false
     },
-    systemUser: {
-        type: Boolean,
-        default: false,
-        immutable: true,
+    role: {
+        type: String,
+        enum: {
+            values: [ "CUSTOMER", "ADMIN", "SYSTEM_USER" ],
+            message: "Role must be CUSTOMER, ADMIN, or SYSTEM_USER"
+        },
+        default: "CUSTOMER",
         select: false
     }
 }, {
